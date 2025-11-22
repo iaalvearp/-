@@ -9,13 +9,13 @@ interface ExportModalProps {
   onConfirm: (dialect: SqlDialect) => void;
 }
 
-const DIALECTS: { id: SqlDialect; name: string; color: string }[] = [
-  { id: 'mysql', name: 'MySQL', color: 'text-blue-600 bg-blue-50 border-blue-200' },
-  { id: 'postgresql', name: 'PostgreSQL', color: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
-  { id: 'mariadb', name: 'MariaDB', color: 'text-amber-700 bg-amber-50 border-amber-200' },
-  { id: 'sqlserver', name: 'SQL Server', color: 'text-red-600 bg-red-50 border-red-200' },
-  { id: 'sqlite', name: 'SQLite', color: 'text-sky-600 bg-sky-50 border-sky-200' },
-  { id: 'oracle', name: 'Oracle', color: 'text-red-700 bg-red-50 border-red-200' },
+const DIALECTS: { id: SqlDialect; name: string; icon: string; color: string }[] = [
+  { id: 'mysql', name: 'MySQL', icon: '/assets/icons/mysql-icon.svg', color: 'bg-blue-50 border-blue-200' },
+  { id: 'postgresql', name: 'PostgreSQL', icon: '/assets/icons/postgresql-icon.svg', color: 'bg-indigo-50 border-indigo-200' },
+  { id: 'mariadb', name: 'MariaDB', icon: '/assets/icons/mariadb-icon.svg', color: 'bg-amber-50 border-amber-200' },
+  { id: 'sqlserver', name: 'SQL Server', icon: '/assets/icons/sql-server-icon.svg', color: 'bg-red-50 border-red-200' },
+  { id: 'sqlite', name: 'SQLite', icon: '/assets/icons/sqlite-icon.svg', color: 'bg-sky-50 border-sky-200' },
+  { id: 'oracle', name: 'Oracle', icon: '/assets/icons/SQL Developer-icon.svg', color: 'bg-red-50 border-red-200' },
 ];
 
 export default function ExportModal({ isOpen, onClose, onConfirm }: ExportModalProps) {
@@ -24,7 +24,7 @@ export default function ExportModal({ isOpen, onClose, onConfirm }: ExportModalP
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
         {/* Header */}
@@ -73,8 +73,8 @@ export default function ExportModal({ isOpen, onClose, onConfirm }: ExportModalP
                     </div>
                 )}
                 
-                <div className={clsx("w-12 h-12 rounded-lg flex items-center justify-center mb-3 transition-colors", dialect.color)}>
-                    <Database className="w-6 h-6" />
+                <div className={clsx("w-16 h-16 rounded-lg flex items-center justify-center mb-3 p-2 transition-colors", dialect.color)}>
+                    <img src={dialect.icon} alt={dialect.name} className="w-full h-full object-contain" />
                 </div>
                 
                 <span className={clsx(
