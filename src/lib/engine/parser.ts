@@ -2,27 +2,27 @@
 import * as XLSX from 'xlsx';
 import type { ParsedSheet, ColumnDefinition, SqlType } from './types';
 
-// --- UTILIDADES DE TEXTO ---
-
 function toSnakeCase(str: string): string {
   return str
     .trim()
     .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quitar tildes
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
     .replace(/[\s\-]+/g, '_')
     .replace(/[^a-z0-9_]/g, '');
 }
 
-// --- LÓGICA DE INFERENCIA (TIPOS) ---
+// MODIFICADO: Ahora recibe el nombre de la columna para ayudar a decidir
+function inferType(values: any[], colName: string): { type: SqlType | null; length?: number } {
+  // 1. Si no hay datos, devolvemos NULL para que la UI parpadee en naranja
+  if (values.length === 0) return { type: null };
 
-function inferType(values: any[]): { type: SqlType; length?: number } {
   let isInt = true;
   let isDecimal = false;
   let isDate = true;
   let isBool = true;
   let maxLength = 0;
 
-  if (values.length === 0) return { type: 'VARCHAR', length: 255 };
+  const isIdColumn = colName.startsWith('id_') || colName === 'id';
 
   for (const val of values) {
     if (val === null || val === undefined || val === '') continue;
@@ -31,43 +31,43 @@ function inferType(values: any[]): { type: SqlType; length?: number } {
     if (strVal.length > maxLength) maxLength = strVal.length;
 
     const lower = strVal.toLowerCase();
-    
-    // 1. Chequeo Booleano
     if (!['true', 'false', '1', '0', 'yes', 'no', 's', 'n'].includes(lower)) {
       isBool = false;
     }
 
-    // 2. Chequeo Numérico
     const isNumber = !isNaN(Number(val)) && strVal.trim() !== '';
     
     if (isNumber) {
       if (!Number.isInteger(Number(val))) isDecimal = true;
-      // IMPORTANTE: Si es un número puro, NO es una fecha (corrección del bug)
       isDate = false; 
     } else {
       isInt = false;
       isDecimal = false;
     }
 
-    // 3. Chequeo Fecha (Más estricto)
-    // Solo aceptamos fechas si NO es un número puro y el string parece fecha
     if (isNumber || (!(val instanceof Date) && isNaN(Date.parse(val)))) {
         isDate = false;
     }
-    // Parche extra: Si el string es algo como "A123", Date.parse a veces falla silenciosamente,
-    // pero ya lo cubrimos con isNumber=false.
   }
 
-  // Jerarquía de decisión
+  // LÓGICA DE IDs
+  if (isIdColumn) {
+      // Si encontramos letras en un ID, forzamos VARCHAR
+      if (!isInt) {
+          return { type: 'VARCHAR', length: Math.max(50, maxLength + 10) };
+      }
+      // Si son solo números, preferimos INT (a menos que sean gigantes)
+      if (maxLength > 15) return { type: 'VARCHAR', length: Math.max(50, maxLength + 5) };
+      return { type: 'INT' };
+  }
+
   if (isBool) return { type: 'BOOLEAN' };
   if (isDate && maxLength > 0 && maxLength < 25) return { type: 'DATE' }; 
   
   if (isInt && !isDecimal) {
-      // IDs largos (seriales) a VARCHAR para no romper INT limits
       if (maxLength > 15) return { type: 'VARCHAR', length: Math.max(50, maxLength + 5) };
       return { type: 'INT' };
   }
-  
   if (isInt || isDecimal) return { type: 'DECIMAL' };
   if (maxLength > 255) return { type: 'TEXT' };
   
@@ -77,19 +77,17 @@ function inferType(values: any[]): { type: SqlType; length?: number } {
   return { type: 'VARCHAR', length: finalLength };
 }
 
-// --- LÓGICA DE DETECCIÓN DE TABLAS MÚLTIPLES ---
-
+/**
+ * Analiza la fila de cabeceras y busca "islas" de datos separadas por vacíos.
+ * Ejemplo: ["id", "nombre", null, "otro_id", "valor"] 
+ * Detecta: Rango 1 [0,1] y Rango 2 [3,4]
+ */
 interface ColumnRange {
     start: number;
     end: number;
     headers: string[];
 }
 
-/**
- * Analiza la fila de cabeceras y busca "islas" de datos separadas por vacíos.
- * Ejemplo: ["id", "nombre", null, "otro_id", "valor"] 
- * Detecta: Rango 1 [0,1] y Rango 2 [3,4]
- */
 function detectTableRanges(headerRow: any[]): ColumnRange[] {
     const ranges: ColumnRange[] = [];
     let currentStart: number | null = null;
@@ -120,7 +118,7 @@ function detectTableRanges(headerRow: any[]): ColumnRange[] {
     return ranges;
 }
 
-// --- FUNCIÓN PRINCIPAL ---
+
 
 export async function parseExcelFile(file: File): Promise<ParsedSheet[]> {
   return new Promise((resolve, reject) => {
@@ -132,42 +130,33 @@ export async function parseExcelFile(file: File): Promise<ParsedSheet[]> {
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
         const allDetectedTables: ParsedSheet[] = [];
 
-        // 1. ITERAMOS CADA HOJA FÍSICA (Pestaña de abajo)
         workbook.SheetNames.forEach(sheetName => {
             const worksheet = workbook.Sheets[sheetName];
-            
-            // Convertimos toda la hoja a una matriz gigante (incluyendo vacíos)
-            // defval: null asegura que los huecos sean null y no undefined
             const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1, defval: null });
 
             if (jsonData.length < 1) return;
 
             const headerRow = jsonData[0];
-            
-            // 2. DETECTAMOS SI HAY VARIAS TABLAS EN LA MISMA HOJA
             const tableRanges = detectTableRanges(headerRow);
 
-            // 3. PROCESAMOS CADA SUB-TABLA ENCONTRADA
             tableRanges.forEach((range, tableIndex) => {
-                const rows = jsonData.slice(1); // Filas de datos (sin cabecera)
-                
-                // Si esta "sub-tabla" no tiene filas de datos, la ignoramos
+                const rows = jsonData.slice(1); 
                 if (rows.length === 0 && range.headers.length === 0) return;
 
                 const columns: ColumnDefinition[] = range.headers.map((header, localIndex) => {
-                    // Índice real en la matriz gigante
                     const globalIndex = range.start + localIndex;
-                    
-                    // Extraemos datos solo de esta columna específica
                     const columnData = rows.slice(0, 100).map(row => row[globalIndex]);
-                    const inference = inferType(columnData);
                     
                     const finalHeader = header ? header.toString() : `col_${localIndex}`;
+                    const sqlName = toSnakeCase(finalHeader);
+                    
+                    // Pasamos el nombre para la lógica de IDs
+                    const inference = inferType(columnData, sqlName);
 
                     return {
                         id: crypto.randomUUID(),
                         originalName: finalHeader,
-                        sqlName: toSnakeCase(finalHeader),
+                        sqlName: sqlName,
                         type: inference.type,
                         length: inference.length,
                         nullable: rows.some(row => row[globalIndex] === null || row[globalIndex] === ''),
@@ -175,7 +164,9 @@ export async function parseExcelFile(file: File): Promise<ParsedSheet[]> {
                     };
                 });
 
-                // Generamos un nombre único: "Hoja1" o "Hoja1 (Tabla 2)"
+                const tableData = rows.map(row => row.slice(range.start, range.end + 1))
+                                      .filter(row => row.some(val => val !== null && val !== ''));
+
                 let uniqueName = sheetName;
                 if (tableRanges.length > 1) {
                     uniqueName = `${sheetName} (Tabla ${tableIndex + 1})`;
@@ -184,8 +175,8 @@ export async function parseExcelFile(file: File): Promise<ParsedSheet[]> {
                 allDetectedTables.push({
                     sheetName: uniqueName,
                     columns,
-                    totalRows: rows.length,
-                    data: [] // Ya no guardamos la data cruda completa para ahorrar RAM
+                    totalRows: tableData.length,
+                    data: tableData
                 });
             });
         });
