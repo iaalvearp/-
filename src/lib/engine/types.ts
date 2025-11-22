@@ -1,6 +1,6 @@
 // src/lib/engine/types.ts
 
-export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'mariadb';
+export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'mariadb' | 'oracle';
 
 export type SqlType = 'INT' | 'DECIMAL' | 'VARCHAR' | 'TEXT' | 'DATE' | 'BOOLEAN';
 

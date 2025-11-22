@@ -1,40 +1,198 @@
-// src/lib/engine/sql-generator.ts
-import type { ParsedSheet, SqlDialect } from './types';
+import type { ParsedSheet, SqlDialect, SqlType, ColumnDefinition } from './types';
+
+// --- UTILS ---
+
+function escapeString(val: string, dialect: SqlDialect): string {
+    if (val === null || val === undefined) return 'NULL';
+    // Basic escaping: replace ' with ''
+    return `'${val.replace(/'/g, "''")}'`;
+}
+
+function formatValue(val: any, type: SqlType | null, dialect: SqlDialect): string {
+    if (val === null || val === undefined || val === '') return 'NULL';
+
+    if (type === 'BOOLEAN') {
+        const truthy = ['true', '1', 'yes', 's', 'si'];
+        const isTrue = truthy.includes(String(val).toLowerCase());
+        if (dialect === 'sqlserver') return isTrue ? '1' : '0'; // BIT
+        if (dialect === 'postgresql') return isTrue ? 'TRUE' : 'FALSE';
+        return isTrue ? '1' : '0'; // Default to 1/0 for most
+    }
+
+    if (type === 'INT' || type === 'DECIMAL') {
+        return String(val).replace(',', '.'); // Ensure dot decimal
+    }
+
+    return escapeString(String(val), dialect);
+}
+
+function getQuoteChar(dialect: SqlDialect): [string, string] {
+    switch (dialect) {
+        case 'mysql':
+        case 'mariadb':
+            return ['`', '`'];
+        case 'sqlserver':
+            return ['[', ']'];
+        case 'postgresql':
+        case 'oracle':
+        case 'sqlite':
+        default:
+            return ['"', '"'];
+    }
+}
+
+function quoteId(name: string, dialect: SqlDialect): string {
+    const [start, end] = getQuoteChar(dialect);
+    return `${start}${name}${end}`;
+}
+
+function mapType(type: SqlType | null, length: number | undefined, dialect: SqlDialect): string {
+    if (!type) return 'VARCHAR(255)'; // Fallback
+
+    switch (type) {
+        case 'INT':
+            if (dialect === 'oracle') return 'NUMBER(10)';
+            return 'INT';
+        case 'DECIMAL':
+            if (dialect === 'oracle') return 'NUMBER(10,2)';
+            return 'DECIMAL(10,2)';
+        case 'VARCHAR':
+            const len = length || 255;
+            if (dialect === 'oracle') return `VARCHAR2(${len})`;
+            if (dialect === 'sqlserver') return `NVARCHAR(${len})`;
+            return `VARCHAR(${len})`;
+        case 'TEXT':
+            if (dialect === 'sqlserver') return 'NVARCHAR(MAX)';
+            if (dialect === 'oracle') return 'CLOB';
+            return 'TEXT';
+        case 'DATE':
+            return 'DATE'; // Most support DATE, sqlserver has DATE (newer) or DATETIME
+        case 'BOOLEAN':
+            if (dialect === 'sqlserver') return 'BIT';
+            if (dialect === 'oracle') return 'NUMBER(1)'; // Oracle no tiene BOOLEAN nativo en SQL puro antiguo, pero en 23c sí. Asumimos compatibilidad.
+            if (dialect === 'mysql' || dialect === 'mariadb') return 'TINYINT(1)';
+            if (dialect === 'sqlite') return 'INTEGER'; // 0 or 1
+            return 'BOOLEAN';
+        default:
+            return 'VARCHAR(255)';
+    }
+}
+
+// --- GENERATOR ---
 
 export function generateGlobalSQL(sheets: ParsedSheet[], dialect: SqlDialect): string {
-    let sql = `-- Generado por SQLizer\n-- Dialecto: ${dialect.toUpperCase()}\n\n`;
+    let sql = `-- Generado por SQLizer\n-- Dialecto: ${dialect.toUpperCase()}\n-- Fecha: ${new Date().toISOString()}\n\n`;
 
     // 1. CREATE TABLES
     sheets.forEach(sheet => {
-        const tableName = sheet.sheetName.replace(/\s+/g, '_').toLowerCase(); // Limpieza básica del nombre
-        sql += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`;
-        
-        const colDefs = sheet.columns.map(col => {
-            let line = `  ${col.sqlName} ${col.type}`;
-            if (col.type === 'VARCHAR') line += `(${col.length})`;
-            if (!col.nullable) line += ` NOT NULL`;
-            // Heurística simple de Primary Key: Si se llama "id" o "id_TABLA"
-            if (col.sqlName === 'id' || col.sqlName === `id_${tableName}`) {
-                line += ` PRIMARY KEY`;
-                // Auto-increment según dialecto
-                if (col.type === 'INT') {
-                     if (dialect === 'postgresql') line = `  ${col.sqlName} SERIAL PRIMARY KEY`;
-                     else if (dialect === 'sqlite') line += ` AUTOINCREMENT`;
-                     else line += ` AUTO_INCREMENT`;
+        const tableName = sheet.sheetName;
+        sql += `-- Tabla: ${tableName}\n`;
+        sql += `CREATE TABLE ${quoteId(tableName, dialect)} (\n`;
+
+        const colDefs: string[] = [];
+        const pkCols: string[] = [];
+
+        sheet.columns.forEach((col, idx) => {
+            // PK Logic: Index 0 is PK
+            const isPk = idx === 0;
+            
+            let line = `  ${quoteId(col.sqlName, dialect)} ${mapType(col.type, col.length, dialect)}`;
+
+            // Nullability
+            if (!col.nullable || isPk) {
+                line += ` NOT NULL`;
+            }
+
+            // Auto Increment / Identity Logic
+            if (isPk && col.type === 'INT') {
+                if (dialect === 'postgresql') {
+                    // SERIAL is a pseudo-type, replaces INT
+                    line = `  ${quoteId(col.sqlName, dialect)} SERIAL`; 
+                } else if (dialect === 'sqlite') {
+                    line += ` PRIMARY KEY AUTOINCREMENT`;
+                    // SQLite handles PK inline usually
+                } else if (dialect === 'mysql' || dialect === 'mariadb') {
+                    line += ` AUTO_INCREMENT`;
+                } else if (dialect === 'sqlserver') {
+                    line += ` IDENTITY(1,1)`;
+                } else if (dialect === 'oracle') {
+                    line += ` GENERATED BY DEFAULT AS IDENTITY`;
                 }
             }
-            return line;
+
+            // Add to definitions
+            colDefs.push(line);
+
+            // Store PK for constraint definition (except SQLite which is often inline)
+            if (isPk && dialect !== 'sqlite') {
+                pkCols.push(quoteId(col.sqlName, dialect));
+            }
         });
+
+        // Add PK Constraint
+        if (pkCols.length > 0) {
+            colDefs.push(`  CONSTRAINT ${quoteId(`pk_${tableName}`, dialect)} PRIMARY KEY (${pkCols.join(', ')})`);
+        }
 
         sql += colDefs.join(',\n');
         sql += `\n);\n\n`;
     });
 
-    // 2. INSERTS (Iteramos los datos guardados)
-    // NOTA: Como en el parser optimizamos y borramos .data para ahorrar memoria,
-    // aquí asumimos que si queremos inserts reales, deberíamos haber guardado la data.
-    // Para este ejemplo, generamos un comentario.
-    sql += `-- SECCIÓN DE INSERTS (Pendiente de implementación de carga completa de datos)\n`;
+    // 2. INSERTS
+    sql += `-- INSERTS\n`;
+    sheets.forEach(sheet => {
+        if (!sheet.data || sheet.data.length === 0) return;
+
+        const tableName = quoteId(sheet.sheetName, dialect);
+        const cols = sheet.columns.map(c => quoteId(c.sqlName, dialect)).join(', ');
+
+        // Batch inserts for supported dialects?
+        // For simplicity and compatibility, we'll do single inserts or small batches.
+        // Let's do single inserts to be safe with large data text blocks.
+        
+        sheet.data.forEach(row => {
+            // Map row values to columns. Row might be shorter than columns if missing data?
+            // Parser fills missing with null/empty usually?
+            // We need to match row index to column index.
+            
+            const values = sheet.columns.map((col, idx) => {
+                const val = row[idx]; // Assuming row is array of values corresponding to columns
+                return formatValue(val, col.type, dialect);
+            });
+
+            sql += `INSERT INTO ${tableName} (${cols}) VALUES (${values.join(', ')});\n`;
+        });
+        sql += `\n`;
+    });
+
+    // 3. FOREIGN KEYS (ALTER TABLE)
+    // We do this at the end to avoid creation order issues.
+    // SQLite doesn't support ALTER TABLE ADD CONSTRAINT FOREIGN KEY easily.
+    // For SQLite, FKs must be defined in CREATE TABLE. 
+    // BUT, rewriting CREATE TABLE logic for SQLite just for this is complex.
+    // SQLite allows FKs if PRAGMA foreign_keys = ON.
+    // Let's stick to ALTER TABLE for others. For SQLite, we might skip or add a comment.
     
+    if (dialect !== 'sqlite') {
+        sql += `-- FOREIGN KEYS\n`;
+        sheets.forEach(sheet => {
+            const tableName = quoteId(sheet.sheetName, dialect);
+            
+            sheet.columns.forEach(col => {
+                if (col.foreignKey && col.foreignKey.targetTable && col.foreignKey.targetColumn) {
+                    const fkName = `fk_${sheet.sheetName}_${col.sqlName}`.substring(0, 60); // Limit length
+                    const targetTable = quoteId(col.foreignKey.targetTable, dialect);
+                    const targetCol = quoteId(col.foreignKey.targetColumn, dialect);
+                    const sourceCol = quoteId(col.sqlName, dialect);
+
+                    sql += `ALTER TABLE ${tableName} ADD CONSTRAINT ${quoteId(fkName, dialect)} FOREIGN KEY (${sourceCol}) REFERENCES ${targetTable} (${targetCol});\n`;
+                }
+            });
+        });
+    } else {
+        sql += `-- NOTA PARA SQLITE: Las claves foráneas deben definirse al crear la tabla.\n`;
+        sql += `-- Se han omitido los ALTER TABLE para FKs en este script de SQLite.\n`;
+    }
+
     return sql;
 }

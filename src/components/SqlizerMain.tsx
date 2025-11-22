@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import FileDropzone from './ui/FileDropzone';
 import { parseExcelFile } from '../lib/engine/parser';
 import { generateGlobalSQL } from '../lib/engine/sql-generator';
-import type { ParsedSheet } from '../lib/engine/types';
+import type { ParsedSheet, SqlDialect } from '../lib/engine/types';
+import ExportModal from './ui/ExportModal';
 import { Loader2, Table, Layers, Code, AlertTriangle, Lock, Link as LinkIcon, Key } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -11,6 +12,7 @@ export default function SqlizerMain() {
   const [sheets, setSheets] = useState<ParsedSheet[]>([]); 
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // --- LÓGICA DE NEGOCIO ---
 
@@ -261,19 +263,25 @@ export default function SqlizerMain() {
         return;
     }
 
+    // Abrir modal en lugar de descargar directo
+    setShowExportModal(true);
+  };
+
+  const handleConfirmExport = (dialect: SqlDialect) => {
+    setShowExportModal(false);
+
     const sanitizedSheets = sheets.map(sheet => ({
         ...sheet,
         sheetName: cleanTableName(sheet.sheetName) || `tabla_${Math.floor(Math.random()*1000)}`
     }));
 
-    const dialect = 'mysql'; 
     const sql = generateGlobalSQL(sanitizedSheets, dialect);
     
     const blob = new Blob([sql], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'database_sqlizer.sql';
+    a.download = `database_${dialect}.sql`;
     a.click();
   };
 
@@ -613,7 +621,13 @@ export default function SqlizerMain() {
                 </table>
             </div>
             </div>
-        </div>
+            </div>
+        
+        <ExportModal 
+            isOpen={showExportModal} 
+            onClose={() => setShowExportModal(false)} 
+            onConfirm={handleConfirmExport} 
+        />
       </div>
     );
   }
@@ -637,6 +651,12 @@ export default function SqlizerMain() {
         </div>
       )}
       <FileDropzone onFileAccepted={handleFileAccepted} />
+      
+      <ExportModal 
+        isOpen={showExportModal} 
+        onClose={() => setShowExportModal(false)} 
+        onConfirm={handleConfirmExport} 
+      />
     </div>
   );
 }
