@@ -1,11 +1,35 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+// src/pages/index.astro
+import '../styles/global.css';
+import SqlizerMain from '../components/SqlizerMain';
 ---
 
-<Layout>
-	<Welcome />
-</Layout>
+<html lang="es">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>SQLizer - Convierte Excel a SQL</title>
+	</head>
+	<body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen transition-colors duration-300">
+		
+		<main class="container mx-auto px-4 py-16">
+			{/* Header Simple */}
+			<div class="text-center mb-12 space-y-4">
+				<h1 class="text-5xl font-extrabold tracking-tight bg-linear-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
+					SQLizer
+				</h1>
+				<p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+					Convierte tus hojas de cálculo en sentencias SQL listas para producción.
+					<br/>
+					<span class="text-sm text-gray-500">Privacidad total: Tus archivos se procesan localmente (Plan Pro).</span>
+				</p>
+			</div>
+
+			{/* ZONA DE CARGA (Isla de React) */}
+			<SqlizerMain client:load />
+
+		</main>
+	</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "main": "dist/_worker.js/index.js",
+  "name": "sqlizer-app",
+  "compatibility_date": "2025-11-22",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist"
+  },
+  "observability": {
+    "enabled": true
+  },
+  // AQUI EMPIEZA LO NUEVO: La configuración de la Base de Datos
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sqlizer-db",
+      "database_id": "local-db", 
+      "preview_database_id": "local-db"
+    }
+  ]
+}
