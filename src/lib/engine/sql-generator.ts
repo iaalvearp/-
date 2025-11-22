@@ -1,31 +1,40 @@
-/**
- * Generates SQL statements from parsed data.
- * @param data - The parsed data (e.g., array of objects).
- * @param tableName - The name of the table to insert into.
- * @returns A string containing the SQL statements.
- */
-export function generateSQL(data: Record<string, any>[], tableName: string = 'my_table'): string {
-  if (!data || data.length === 0) {
-    return '-- No data to generate SQL from.';
-  }
+// src/lib/engine/sql-generator.ts
+import type { ParsedSheet, SqlDialect } from './types';
 
-  const columns = Object.keys(data[0]);
-  const statements: string[] = [];
+export function generateGlobalSQL(sheets: ParsedSheet[], dialect: SqlDialect): string {
+    let sql = `-- Generado por SQLizer\n-- Dialecto: ${dialect.toUpperCase()}\n\n`;
 
-  // Create Table Statement (Optional, but useful)
-  const createTable = `CREATE TABLE IF NOT EXISTS ${tableName} (\n  ${columns.map(col => `${col} TEXT`).join(',\n  ')}\n);`;
-  statements.push(createTable);
+    // 1. CREATE TABLES
+    sheets.forEach(sheet => {
+        const tableName = sheet.sheetName.replace(/\s+/g, '_').toLowerCase(); // Limpieza básica del nombre
+        sql += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`;
+        
+        const colDefs = sheet.columns.map(col => {
+            let line = `  ${col.sqlName} ${col.type}`;
+            if (col.type === 'VARCHAR') line += `(${col.length})`;
+            if (!col.nullable) line += ` NOT NULL`;
+            // Heurística simple de Primary Key: Si se llama "id" o "id_TABLA"
+            if (col.sqlName === 'id' || col.sqlName === `id_${tableName}`) {
+                line += ` PRIMARY KEY`;
+                // Auto-increment según dialecto
+                if (col.type === 'INT') {
+                     if (dialect === 'postgresql') line = `  ${col.sqlName} SERIAL PRIMARY KEY`;
+                     else if (dialect === 'sqlite') line += ` AUTOINCREMENT`;
+                     else line += ` AUTO_INCREMENT`;
+                }
+            }
+            return line;
+        });
 
-  // Insert Statements
-  for (const row of data) {
-    const values = columns.map(col => {
-      const val = row[col];
-      if (val === null || val === undefined) return 'NULL';
-      if (typeof val === 'number') return val;
-      return `'${String(val).replace(/'/g, "''")}'`; // Escape single quotes
+        sql += colDefs.join(',\n');
+        sql += `\n);\n\n`;
     });
-    statements.push(`INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`);
-  }
 
-  return statements.join('\n');
+    // 2. INSERTS (Iteramos los datos guardados)
+    // NOTA: Como en el parser optimizamos y borramos .data para ahorrar memoria,
+    // aquí asumimos que si queremos inserts reales, deberíamos haber guardado la data.
+    // Para este ejemplo, generamos un comentario.
+    sql += `-- SECCIÓN DE INSERTS (Pendiente de implementación de carga completa de datos)\n`;
+    
+    return sql;
 }
